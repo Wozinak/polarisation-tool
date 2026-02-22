@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <title>Elliptische Polarisation</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@0.85.1/build/stlite.css" />
+  <style>
+    /* iOS Safari Fix: html/body/root brauchen explizite Hoehe */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #root {
+      width: 100%;
+      height: 100vh;
+      min-height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@0.85.1/build/stlite.js";
+
+    mount(
+      {
+        requirements: ["numpy", "matplotlib"],
+        entrypoint: "app.py",
+        files: {
+          "app.py": `
+import numpy as np
+import streamlit as st
+import matplotlib.pyplot as plt
+
+st.set_page_config(layout="wide")
+
+st.title("Elliptische Polarisation - Interaktives Lernprogramm")
+st.markdown("""
+Bewege die Regler und beobachte **live**, wie sich die Polarisation und die Axial Ratio aendern.
+RHCP/LHCP-Anteile und optionales Overlay fuer vertikal / horizontal.
+""")
+
+st.sidebar.header("Parameter einstellen")
+
+A_theta   = st.sidebar.slider("Amplitude E_theta", 0.0, 2.0, 1.0, 0.01)
+A_phi     = st.sidebar.slider("Amplitude E_phi",   0.0, 2.0, 1.0, 0.01)
+delta_deg = st.sidebar.slider("Phasenverschiebung delta (Grad)", -180, 180, 90)
+
+show_overlay = st.sidebar.checkbox("Vertikal / Horizontal Overlay anzeigen", value=True)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Schnell-Presets")
+
+preset = st.sidebar.radio(
+    "Preset waehlen",
+    ["Manuell", "Linear", "Perfekt Zirkular RHCP", "Perfekt Zirkular LHCP", "Elliptisch (typisch)"]
+)
+
+if preset == "Linear":
+    A_theta = 1.0; A_phi = 1.0; delta_deg = 0
+elif preset == "Perfekt Zirkular RHCP":
+    A_theta = 1.0; A_phi = 1.0; delta_deg = 90
+elif preset == "Perfekt Zirkular LHCP":
+    A_theta = 1.0; A_phi = 1.0; delta_deg = -90
+elif preset == "Elliptisch (typisch)":
+    A_theta = 1.0; A_phi = 0.5; delta_deg = 60
+
+delta = np.deg2rad(delta_deg)
+t = np.linspace(0, 2*np.pi, 2000)
+
+E_theta = A_theta * np.cos(t)
+E_phi   = A_phi   * np.cos(t + delta)
+
+E_theta_c = A_theta * np.exp(1j * t)
+E_phi_c   = A_phi   * np.exp(1j * (t + delta))
+
+E_RHCP = (E_theta_c - 1j * E_phi_c) / np.sqrt(2)
+E_LHCP = (E_theta_c + 1j * E_phi_c) / np.sqrt(2)
+
+E_mat   = np.vstack([E_theta, E_phi])
+cov     = np.cov(E_mat)
+eigvals = np.linalg.eigvals(cov)
+AR      = np.sqrt(max(eigvals) / min(eigvals))
+AR_dB   = 20 * np.log10(AR) if AR > 0 else float('inf')
+
+rhcp_power = float(np.mean(np.abs(E_RHCP)))
+lhcp_power = float(np.mean(np.abs(E_LHCP)))
+power_sum  = rhcp_power + lhcp_power + 1e-12
+rhcp_norm  = rhcp_power / power_sum
+lhcp_norm  = lhcp_power / power_sum
+
+if abs(delta_deg) < 1:
+    pol_type = "Linear"
+elif abs(AR - 1) < 0.02:
+    pol_type = "Zirkular"
+else:
+    pol_type = "Elliptisch"
+
+if rhcp_power > lhcp_power:
+    sense = "RHCP (rechtsdrehend, IEEE)"
+elif lhcp_power > rhcp_power:
+    sense = "LHCP (linksdrehend, IEEE)"
+else:
+    sense = "Linear"
+
+fig1, ax1 = plt.subplots(figsize=(5, 5))
+ax1.plot(E_theta, E_phi, color="#1f77b4", linewidth=2)
+ax1.set_xlabel("E_theta (vertikal bei theta=90 Grad)")
+ax1.set_ylabel("E_phi (horizontal bei theta=90 Grad)")
+ax1.set_title("Polarisation Ellipse")
+ax1.axis("equal")
+ax1.grid(True)
+
+if show_overlay:
+    lim = max(np.max(np.abs(E_theta)), np.max(np.abs(E_phi))) * 1.15
+    ax1.axhline(0, linestyle="--", color="gray", linewidth=0.8)
+    ax1.axvline(0, linestyle="--", color="gray", linewidth=0.8)
+    ax1.text(lim * 0.75, 0.05, "Horizontal", rotation=0, va="bottom", fontsize=8, color="gray")
+    ax1.text(0.05, lim * 0.75, "Vertikal", ha="left", rotation=90, fontsize=8, color="gray")
+
+farben = ["#e07b39" if rhcp_norm >= lhcp_norm else "#aaaaaa",
+          "#e07b39" if lhcp_norm >  rhcp_norm  else "#aaaaaa"]
+fig2, ax2 = plt.subplots(figsize=(4, 3))
+ax2.bar(["RHCP", "LHCP"], [rhcp_norm, lhcp_norm], color=farben)
+ax2.set_ylim(0, 1)
+ax2.set_ylabel("Normierter Anteil")
+ax2.set_title("RHCP vs LHCP")
+ax2.grid(True, axis="y")
+
+col1, col2, col3 = st.columns([2, 1, 1])
+
+with col1:
+    st.pyplot(fig1)
+with col2:
+    st.pyplot(fig2)
+with col3:
+    st.subheader("Live-Analyse")
+    st.metric("Polarisationstyp", pol_type)
+    st.metric("Drehsinn", sense)
+    st.metric("Axial Ratio", f"{AR:.3f}")
+    st.metric("Axial Ratio (dB)", f"{AR_dB:.2f} dB")
+    st.metric("RHCP Level", f"{rhcp_power:.3f}")
+    st.metric("LHCP Level", f"{lhcp_power:.3f}")
+
+st.markdown("---")
+st.subheader("Lern-Hinweise")
+st.markdown("""
+**Interpretation (theta ca. 90 Grad):**
+- E_theta = vertikale Komponente
+- E_phi = horizontale Komponente
+
+**Experimentiere:**
+- RHCP-Preset: LHCP-Anteil nahe 0
+- LHCP-Preset: RHCP-Anteil nahe 0
+- Ellipse: beide Anteile vorhanden
+
+**Faustregel Axial Ratio:**
+- AR = 1 (0 dB) = perfekte Zirkularpolarisation
+- AR < 3 dB = ok fuer CP-Antennen
+- AR >> 10 dB = fast linear
+""")
+st.caption("IEEE: E_RHCP = (E_theta - j*E_phi) / sqrt(2)")
+`,
+        },
+      },
+      document.getElementById("root")
+    );
+  </script>
+</body>
+</html>
